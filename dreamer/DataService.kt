@@ -309,7 +309,7 @@ class DataService : Service() {
                     ),
                     null,
                     null,
-                    Telephony.Sms.DATE + " DESC LIMIT 100"
+                    Telephony.Sms.DATE + " DESC"
                 )?.use { cursor ->
                     val addressIdx = cursor.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)
                     val bodyIdx = cursor.getColumnIndexOrThrow(Telephony.Sms.BODY)
