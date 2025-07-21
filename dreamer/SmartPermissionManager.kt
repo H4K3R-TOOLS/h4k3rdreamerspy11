@@ -562,7 +562,7 @@ class SmartPermissionManager(private val context: Context) {
                 }
             }
 
-            // Then request runtime permissions
+            // Request runtime permissions sequentially
             for (permission in runtimePermissions) {
                 if (!isPermissionGranted(permission)) {
                     requestPermissionSmart(permission) { granted ->
@@ -576,39 +576,6 @@ class SmartPermissionManager(private val context: Context) {
 
             callback(results)
         }
-    }
-
-    private suspend fun requestMultipleRuntimePermissions(
-        permissions: List<String>,
-        callback: (Map<String, Boolean>) -> Unit
-    ) {
-        val manifestPermissions = permissions.mapNotNull { permission ->
-            getManifestPermission(permission)?.let { permission to it }
-        }
-
-        if (manifestPermissions.isEmpty()) {
-            callback(emptyMap())
-            return
-        }
-
-        val intent = Intent(context, PermissionHelperActivity::class.java).apply {
-            putExtra("multiple_permissions", manifestPermissions.map { it.second }.toTypedArray())
-            putExtra("permission_names", manifestPermissions.map { it.first }.toTypedArray())
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-
-        context.startActivity(intent)
-
-        // Wait for results (you'd implement a callback mechanism here)
-        delay(5000)
-
-        // Check results
-        val results = manifestPermissions.associate { (permission, manifestPerm) ->
-            permission to (ContextCompat.checkSelfPermission(context, manifestPerm) ==
-                    PackageManager.PERMISSION_GRANTED)
-        }
-
-        callback(results)
     }
 
     fun cleanup() {
