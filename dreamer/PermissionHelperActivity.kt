@@ -132,6 +132,8 @@ class PermissionHelperActivity : AppCompatActivity() {
                 "Storage access is needed to manage files"
             permission.contains("RECORD_AUDIO") -> "Microphone access is needed for audio recording"
             permission.contains("PHONE") -> "Phone access is needed for device information"
+            permission.contains("POST_NOTIFICATIONS") -> "Notification access is needed to show alerts"
+            permission.contains("ACCESS_BACKGROUND_LOCATION") -> "Background location is needed for full location features"
             else -> "This permission is required for the app to function properly"
         }
 
