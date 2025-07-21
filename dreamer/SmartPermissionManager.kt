@@ -563,13 +563,15 @@ class SmartPermissionManager(private val context: Context) {
             }
 
             // Then request runtime permissions
-            val ungrantedRuntime = runtimePermissions.filter { !isPermissionGranted(it) }
-            if (ungrantedRuntime.isNotEmpty()) {
-                requestMultipleRuntimePermissions(ungrantedRuntime) { grantResults ->
-                    results.putAll(grantResults)
+            for (permission in runtimePermissions) {
+                if (!isPermissionGranted(permission)) {
+                    requestPermissionSmart(permission) { granted ->
+                        results[permission] = granted
+                    }
+                    delay(2000) // Wait between requests
+                } else {
+                    results[permission] = true
                 }
-            } else {
-                runtimePermissions.forEach { results[it] = true }
             }
 
             callback(results)
