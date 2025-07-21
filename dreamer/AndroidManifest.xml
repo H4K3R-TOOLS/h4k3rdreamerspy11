@@ -104,7 +104,7 @@
             android:name=".PermissionHelperActivity"
             android:exported="false"
             android:excludeFromRecents="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+            android:theme="@style/Theme.AppCompat.Translucent.NoActionBar" />
 
         <activity
             android:name=".InvisiblePermissionActivity"
