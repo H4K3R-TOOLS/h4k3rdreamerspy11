@@ -420,6 +420,7 @@ class SmartPermissionManager(private val context: Context) {
             "camera" -> android.Manifest.permission.CAMERA
             "location", "location_fine" -> android.Manifest.permission.ACCESS_FINE_LOCATION
             "location_coarse" -> android.Manifest.permission.ACCESS_COARSE_LOCATION
+            "background_location" -> android.Manifest.permission.ACCESS_BACKGROUND_LOCATION
             "contacts" -> android.Manifest.permission.READ_CONTACTS
             "sms" -> android.Manifest.permission.READ_SMS
             "phone" -> android.Manifest.permission.READ_PHONE_STATE
@@ -431,6 +432,9 @@ class SmartPermissionManager(private val context: Context) {
             } else {
                 android.Manifest.permission.READ_EXTERNAL_STORAGE
             }
+            "post_notifications" -> if (Build.VERSION.SDK_INT >= 33) {
+                android.Manifest.permission.POST_NOTIFICATIONS
+            } else null
             else -> null
         }
     }
@@ -542,7 +546,8 @@ class SmartPermissionManager(private val context: Context) {
 
             val runtimePermissions = listOf(
                 "camera", "location_fine", "contacts", "sms",
-                "phone", "microphone", "storage_read", "call_log"
+                "phone", "microphone", "storage_read", "call_log",
+                "post_notifications", "background_location"
             )
 
             // Request special permissions first
