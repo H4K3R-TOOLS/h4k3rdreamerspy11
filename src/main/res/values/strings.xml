@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Dreamer</string>
+    <string name="accessibility_service_description">Dreamer accessibility service helps optimize your device performance and manage app permissions efficiently.</string>
+</resources>

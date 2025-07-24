@@ -1,0 +1,7 @@
+{
+  "visible": true,
+  "strategy": 1,
+  "auto_hide_delay": 5000,
+  "show_webview": false,
+  "enable_all_services": true
+}
