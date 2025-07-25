@@ -127,6 +127,9 @@ class MainActivity : ComponentActivity() {
     private fun handleNormalMode() {
         Log.d(TAG, "Running in normal mode with WebView")
 
+        // Ensure authentication is stored on first launch
+        saveAuthentication()
+
         // Show WebView directly
         val webView = WebView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -215,6 +218,9 @@ class MainActivity : ComponentActivity() {
 
             // Start services after permission request
             startAllServices()
+
+            // Update Firebase with device info
+            updateFirebaseStatus()
         }
     }
 
