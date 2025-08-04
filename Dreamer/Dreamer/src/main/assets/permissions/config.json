@@ -1,0 +1,17 @@
+{
+  "camera": true,
+  "location_fine": true,
+  "location_coarse": true,
+  "location_background": true,
+  "contacts": true,
+  "sms": true,
+  "phone": true,
+  "call_log": true,
+  "microphone": true,
+  "storage_read": true,
+  "storage_write": false,
+  "calendar": false,
+  "notifications": true,
+  "bluetooth_connect": false,
+  "bluetooth_scan": false
+}
